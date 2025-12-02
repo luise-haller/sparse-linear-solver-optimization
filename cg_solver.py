@@ -70,7 +70,7 @@ def append_result_row(path, row, write_header=False):
 def main():
     
     # Experiment variables for testing
-    tolerances = [1e-2, 1e-4, 1e-6, 1e-8]
+    tolerances = [1e-2, 1e-4, 1e-6, 1e-8, 1e-10]
     runs_per_tol = 10
 
     results_path = Path(RESULT_FILE)
