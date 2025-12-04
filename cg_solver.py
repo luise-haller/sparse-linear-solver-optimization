@@ -4,11 +4,11 @@ import time
 import csv
 from pathlib import Path
 
-RESULT_FILE = "results.csv"
+RESULT_FILE = "results03.csv"
 
 def run_single_solve(tolerance, run_id):
     # Loading sparse matrix on reference device
-    fn = "bcsstk01.mtx"
+    fn = "bcsstk03.mtx"
     A = pg.read ( path = fn , dtype = "double" , format = "Csr", device = "cpu" )
     n_rows = A.shape[0]
 
