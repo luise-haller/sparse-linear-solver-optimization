@@ -14,10 +14,10 @@ This repository contains a small case study on the performance of a sparse itera
 The core code and data are as follows:
 
 - `cg_solver.py` - runs CG on a real world sparse matrix, sweeps tolerances, and writes results to `results.csv`.
-- `results.csv` - collected experimental data from multiple runs.
 - `analysis.py` - summarizes runtime and residual statistics by tolerance.
 - `plot_analysis.py` - generates plots `runtime_vs_tolerance.png` and `residual_vs_tolerance.png`.
-- `bcsstk01.mtx` - SuiteSparse test matrix (structural stiffness matrix).
+- `bcsstk01.mtx`, `bcsstk02.mtx`, `bcsstk03.mtx`, `bcsstk04.mtx`, `bcsstk05.mtx`, `bcsstk06.mtx`, `bcsstk08.mtx`, `bcsstk11.mtx`, `bcsstk14.mtx`, `bcsstk15.mtx`, `bcsstk16.mtx`, and `bcsstk18.mtx` - SuiteSparse test matrices (structural stiffness matrices of increasing dimensions (48 x 48 to 11948 x 11948)).
+- `results01.csv`, `results02.csv`, `results03.csv`, `results04.csv`, `results05.csv`, `results06.csv`, `results08.csv`, `results11.csv`, `results14.csv``results15.csv`, `results16.csv`, and `results18.csv` - collected experimental data from multiple runs.
 
 --
 
