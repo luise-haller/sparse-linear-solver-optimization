@@ -3,6 +3,7 @@ import numpy as np
 import time
 import csv
 from pathlib import Path
+import os
 
 RESULT_FILES = [
     "results/results01.csv",
@@ -34,16 +35,24 @@ MATRIX_FILES = [
     "matrices/bcsstk18.mtx",
 ]
 
+FIXED_TOL = 1e-6
+
+PRECONDITIONERS = [
+    "preconditioner::Jacobi",
+    "preconditioner::Ic",
+    "preconditioner::Ilu"
+]
+
 """Run single CG solve with Jacobi preconditioner and given tolerance."""
-def run_solver(A, b, x, tolerance, run_id):
+def run_solver(A, b, x, prec_type, run_id):
     solver_params = {
         "type": "solver::Cg",
         "preconditioner": {
-            "type": "preconditioner::Jacobi"
+            "type": prec_type
         },
         "criteria": [
             {"type": "Iteration", "max_iters": 1000},
-            {"type": "ResidualNorm", "reduction_factor": tolerance},
+            {"type": "ResidualNorm", "reduction_factor": FIXED_TOL},
         ],
     }
 
@@ -65,61 +74,74 @@ def run_solver(A, b, x, tolerance, run_id):
     b_norm = np.linalg.norm(b_np, ord=2)
     relative_residual = residual_norm / b_norm
 
-
-    # Console feedback on performance data
-    print("\n ---Performance Data---")
-    print(f"\nRun {run_id}, tol={tolerance:g}")
-    print(f"Wall-clock solve time: {wall_time:.6e} seconds")
-    print(f"Final residual 2-norm: {residual_norm:.6e}")
-    print(f"Relative residual 2-norm: {relative_residual:.6e}")
-
+    print(
+        f"Run {run_id}, prec={prec_type}, tol={FIXED_TOL:g}: "
+        f"{wall_time:.6e}s, rel_res={relative_residual:.6e}"
+    )
     return wall_time, residual_norm, relative_residual
 
 """Run full tolerance experiment for one matrix and save to CSV."""
-def run_matrix_experiment(matrix_path, result_path, matrix_id):
-    print(f"\n=== Processing {matrix_path} (Matrix {matrix_id}) ===")
+def run_matrix_experiment(matrix_filename, result_filename, matrix_id):
+    matrix_path = Path(matrix_filename)
+    print(f"\n---Processing {matrix_path} (Matrix {matrix_id})---")
     
-    # Load matrix
-    A = pg.read(path=matrix_path, dtype="double", format="Csr", device="cpu")
-    n_rows = A.shape[0]
-    print(f"Matrix dimensions: {A.shape}")
+    if not matrix_path.exists():
+        print(f"ERROR: Matrix file not found: {matrix_path.absolute()}")
+        return
 
-    # RHS b and initial guess x
+    A = pg.read(path=str(matrix_path), dtype="double", format="Csr", device="cpu")
+    n_rows = A.shape[0]
+    print(f"Matrix loaded successfully: {A.shape}")
+
     b = pg.as_tensor(device="cpu", dim=(n_rows, 1), dtype="double", fill=1.0)
     x = pg.as_tensor(device="cpu", dim=(n_rows, 1), dtype="double", fill=0.0)
 
-    tolerances = [1e-2, 1e-4, 1e-6, 1e-8, 1e-10]
-    runs_per_tol = 10
-
-    results_path = Path(result_path)
+    results_path = Path(result_filename)
+    results_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not results_path.exists()
 
     run_id = 0
-    for tol in tolerances:
-        for _ in range(runs_per_tol):
-            run_id += 1
-            wall_time, res_norm, rel_res = run_solver(A, b, x, tol, run_id)
-            row = [run_id, tol, wall_time, res_norm, rel_res]
+    runs_per_prec = 10
 
+    for prec in PRECONDITIONERS:
+        print(f"\n-- Preconditioner: {prec} --")
+        for _ in range(runs_per_prec):
+            run_id += 1
+            wall_time, res_norm, rel_res = run_solver(A, b, x, prec, run_id)
+            row = [run_id, prec, FIXED_TOL, wall_time, res_norm, rel_res]
             append_result_row(results_path, row, write_header=write_header)
             write_header = False
 
-    print(f"Saved {matrix_id} results to {results_path.resolve()}")
+    print(f"Saved results to {results_path.absolute()}")
 
 """Append a result row to CSV file."""
 def append_result_row(path, row, write_header=False):
     with open(path, "a", newline="") as f:
         writer = csv.writer(f)
-        
         if write_header:
             writer.writerow(
-                ["run_id", "tolerance", "wall_time_s", 
-                "residual_norm", "relative_residual"]
+                [
+                    "run_id",
+                    "preconditioner",
+                    "tolerance",
+                    "wall_time_s",
+                    "residual_norm",
+                    "relative_residual",
+                ]
             )
         writer.writerow(row)
 
+def clear_results_files():
+    for path in RESULT_FILES:
+        p = Path(path)
+        if p.exists():
+            p.unlink()
+
+
 """Run experiments on all bcsstk matrices."""
 def main():
+    clear_results_files()
+    
     for i, (matrix_file, result_file) in enumerate(zip(MATRIX_FILES, RESULT_FILES), 1):
         run_matrix_experiment(matrix_file, result_file, i)
 

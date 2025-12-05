@@ -19,25 +19,39 @@ RESULT_FILES = [
 print("---Analysis for ALL BCSSTK Matrices---\n")
 
 all_dfs = {}
+
 for i, file in enumerate(RESULT_FILES, 1):
-    if os.path.exists(file):
-        df = pd.read_csv(file)
-        all_dfs[f'bcsstk0{i}'] = df
-        print(f"\n---BCSSTK0{i} ({file})---")
-        print(f"Shape: {df.shape}")
-        print("First few rows:")
-        print(df.head())
+    if not os.path.exists(file):
+        print(f"Warning: {file} not found, skipping.")
+        continue
 
-        # Summary stats by tolerance
-        grouped = df.groupby("tolerance")[["wall_time_s", "residual_norm", "relative_residual"]]
-        summary = grouped.agg(["mean", "std", "min", "max"])
-        print("\nSummary by tolerance:")
-        print(summary.round(6))
-    else:
-        print(f"\nWarning: {file} not found.")
+    df = pd.read_csv(file)
+    if "preconditioner" not in df.columns:
+        print(f"Warning: {file} has no 'preconditioner' column, skipping.")
+        continue
 
-# Big, overall summary of all matrices
+    matrix_name = f"bcsstk0{i}"
+    all_dfs[matrix_name] = df
+
+    print(f"\n--- {matrix_name} ({file}) ---")
+    print("First few rows:")
+    print(df.head())
+    
+
+    grouped = df.groupby("preconditioner")[["wall_time_s", "residual_norm", "relative_residual"]]
+    summary = grouped.agg(["mean", "std", "min", "max"])
+    print("\nSummary by preconditioner:")
+    print(summary.round(6))
+
+
 if all_dfs:
-    combined_df = pd.concat(all_dfs.values(), keys=all_dfs.keys(), names=['matrix'])
-    print("\n=== COMBINED SUMMARY ACROSS ALL MATRICES ===")
-    print(combined_df.groupby(['matrix', 'tolerance'])["wall_time_s"].agg(['mean', 'std']).round(6))
+    combined = pd.concat(all_dfs, names=["matrix"])
+    print("\n=== Combined mean wall time by matrix and preconditioner ===")
+    combo_summary = (
+        combined.groupby(["matrix", "preconditioner"])["wall_time_s"]
+        .agg(["mean", "std", "min", "max"])
+        .round(6)
+    )
+    print(combo_summary)
+else:
+    print("\nNo valid result files loaded.")

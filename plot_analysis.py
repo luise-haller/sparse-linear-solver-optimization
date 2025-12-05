@@ -26,100 +26,66 @@ data = {}
 for i, file in enumerate(RESULT_FILES, 1):
     if os.path.exists(file):
         df = pd.read_csv(file)
+        
+        if "preconditioner" not in df.columns:
+            print(f"Skipping {file}: no 'preconditioner' column found.")
+            continue
         matrix_name = f"bcsstk0{i}"
-        grouped = df.groupby("tolerance")[["wall_time_s", "relative_residual"]].mean().reset_index()
-        data[matrix_name] = grouped
-        print(f"Loaded {matrix_name}: {len(grouped)} tolerance levels")
+        data[matrix_name] = df
+        print(f"Loaded {matrix_name} from {file}: {len(df)} rows")
 
-# Comparison plots with standard tolerance values
-tols = np.logspace(-10, -2, 5)
-fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-
-# Plot 1: Runtime vs Tolerance for all
-ax = axes[0, 0]
-for matrix_name, df in data.items():
-    ax.loglog(df["tolerance"], df["wall_time_s"], marker="o", label=matrix_name)
-ax.invert_xaxis()
-ax.set_xlabel("Tolerance")
-ax.set_ylabel("Mean Wall Time (s)")
-ax.set_title("CG Runtime vs. Tolerance")
-ax.legend()
-ax.grid(True, which="both")
-
-# Plot 2: Residual vs Tolerance for all
-ax = axes[0, 1]
-for matrix_name, df in data.items():
-    ax.loglog(df["tolerance"], df["relative_residual"], marker="o", label=matrix_name)
-ax.invert_xaxis()
-ax.set_xlabel("Tolerance")
-ax.set_ylabel("Mean Relative Residual")
-ax.set_title("Relative Residual vs. Tolerance")
-ax.legend()
-ax.grid(True, which="both")
-
-
-sizes = {name: idx for idx, name in enumerate(sorted(data.keys()), start=1)}  # size index for all loaded matrices
-
-# Plot 3: Runtime scaling with matrix size
-ax = axes[1, 0]
-mean_times = []
-for matrix_name in sorted(data.keys()):
-    df = data[matrix_name]
-    tight_tol_time = (
-        df[df["tolerance"] == 1e-10]["wall_time_s"].iloc[0]
-        if 1e-10 in df["tolerance"].values
-        else df["wall_time_s"].iloc[-1]
-    )
-    mean_times.append(tight_tol_time)
-ax.plot(list(sizes.values()), mean_times, marker="o")
-ax.set_xlabel("Matrix Index (ordered bcsstk)")
-ax.set_ylabel("Mean Wall Time (s, tightest tol)")
-ax.set_title("Runtime Scaling with Matrix Size")
-ax.grid(True)
-
-# Plot 4: Iteration count proxy (using 1e-6 tolerance wall time)
-ax = axes[1, 1]
-times_1e6 = []
-for matrix_name in sorted(data.keys()):
-    df = data[matrix_name]
-    if 1e-6 in df["tolerance"].values:
-        times_1e6.append(df[df["tolerance"] == 1e-6]["wall_time_s"].iloc[0])
-    else:
-        times_1e6.append(np.nan)
-ax.plot(list(sizes.values()), times_1e6, marker="o")
-ax.set_xlabel("Matrix Index (ordered bcsstk)")
-ax.set_ylabel("Mean Wall Time (s, tol=1e-6)")
-ax.set_title("Fixed Tolerance Performance")
-ax.grid(True)
-
-plt.tight_layout()
-plt.savefig(os.path.join(PLOT_DIR, "cg_analysis_all_matrices.png"),
-            dpi=200, bbox_inches="tight")
-print(f"Saved combined analysis plot to {PLOT_DIR}/cg_analysis_all_matrices.png")
-
-# All individual plots for each matrix
-for matrix_name, df in data.items():
-    plt.figure(figsize=(10, 4))
-
-    plt.subplot(1, 2, 1)
-    plt.loglog(df["tolerance"], df["wall_time_s"], marker="o")
-    plt.gca().invert_xaxis()
-    plt.xlabel("Tolerance")
+# Plot of mean wall time by preconditioner across matrices
+if data:
+    all_prec = sorted(set( prec for df in data.values() for prec in df["preconditioner"].unique() ))
+    plt.figure(figsize=(10, 6))
+    for matrix_idx, (matrix_name, df) in enumerate(sorted(data.items()), start=1):
+        grouped = (
+            df.groupby("preconditioner")[["wall_time_s", "relative_residual"]]
+            .mean()
+            .reset_index()
+        )
+        # aligning the all_prec order
+        mean_times = []
+        for prec in all_prec:
+            row = grouped[grouped["preconditioner"] == prec]
+            mean_times.append(row["wall_time_s"].iloc[0] if not row.empty else np.nan)
+        x = np.arange(len(all_prec)) + 0.1 * (matrix_idx - 1)
+        plt.bar(x, mean_times, width=0.08, label=matrix_name)
+    
+    plt.xticks(np.arange(len(all_prec)) + 0.1 * (len(data) - 1) / 2, all_prec, rotation=45, ha="right")
     plt.ylabel("Mean Wall Time (s)")
-    plt.title(f"{matrix_name} Runtime vs. Tolerance")
-    plt.grid(True, which="both")
-
-    plt.subplot(1, 2, 2)
-    plt.loglog(df["tolerance"], df["relative_residual"], marker="o")
-    plt.gca().invert_xaxis()
-    plt.xlabel("Tolerance")
-    plt.ylabel("Mean Relative Residual")
-    plt.title(f"{matrix_name} Residual vs. Tolerance")
-    plt.grid(True, which="both")
-
+    plt.title("Mean Wall Time by Preconditioner (fixed tolerance)")
+    plt.legend()
     plt.tight_layout()
-    out_path = os.path.join(PLOT_DIR, f"analysis_{matrix_name}.png")
+    out_path = os.path.join(PLOT_DIR, "preconditioners_time_comparison.png")
     plt.savefig(out_path, dpi=200, bbox_inches="tight")
     print(f"Saved {out_path}")
 
-print("Saved all plots into plots/ subfolder.")
+# Individual plots for each matrix
+for matrix_name, df in data.items():
+    grouped = (
+        df.groupby("preconditioner")[["wall_time_s", "relative_residual"]]
+        .mean()
+        .reset_index()
+    )
+
+    plt.figure(figsize=(10, 4))
+
+    plt.subplot(1, 2, 1)
+    plt.bar(grouped["preconditioner"], grouped["wall_time_s"])
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Mean Wall Time (s)")
+    plt.title(f"{matrix_name}: Time by Preconditioner")
+
+    plt.subplot(1, 2, 2)
+    plt.bar(grouped["preconditioner"], grouped["relative_residual"])
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Mean Relative Residual")
+    plt.title(f"{matrix_name}: Residual by Preconditioner")
+
+    plt.tight_layout()
+    out_path = os.path.join(PLOT_DIR, f"prec_{matrix_name}.png")
+    plt.savefig(out_path, dpi=200, bbox_inches="tight")
+    print(f"Saved {out_path}")
+
+print("Saved all preconditioner comparison plots into plots/.")
