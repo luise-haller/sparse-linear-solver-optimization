@@ -10,7 +10,7 @@ The core goal is to understand how tolerance, matrix dimension, and precondition
   - `cg_solver.py` – runs CG on each matrix in `matrices/` at a fixed tolerance, sweeps over three preconditioners (Jacobi, IC, ILU), and writes per‑run statistics to CSV.
   - `analysis.py` – aggregates results by matrix and preconditioner and prints tables of mean, standard deviation, min, and max for wall time and residual metrics.
   - `plot_analysis.py` – generates comparison plots of mean wall time and mean relative residual across matrices and preconditioners.
-- `matrices/` – SuiteSparse `bcsstk` stiffness matrices of increasing size and sparsity, from \(48\times 48\) up to \(11948\times 11948\).
+- `matrices/` – SuiteSparse `bcsstk` stiffness matrices of increasing size and sparsity, from 48 x 48  up to 11948 x 11948.
 - `results/` – CSV files (`results01.csv`, …, `results18.csv`) with raw experimental data.
 - `plots/`
   - `cg_analysis_all_matrices.png` – global tolerance and size analysis across all downloaded matrices.
@@ -22,13 +22,10 @@ The core goal is to understand how tolerance, matrix dimension, and precondition
 
 ## Real-world problem and model
 
-Large simulations in structural mechanics, fluids, and related fields repeatedly solve sparse SPD systems
-\[
-Ax = b,
-\]
-where \(A\) is a stiffness matrix arising from discretized PDEs, \(b\) is a load or forcing vector, and \(x\) contains displacements or other state variables. Direct factorization can become too slow or memory‑intensive for very large problems, so iterative Krylov methods such as CG are preferred. Each CG iteration costs \(O(\mathrm{nnz}(A))\) operations, dominated by sparse matrix–vector products plus a few vector updates and dot products.
+Large simulations in structural mechanics, fluids, and related fields repeatedly solve sparse SPD systems Ax = b, where A is a stiffness matrix arising from discretized PDEs, b is a load or forcing vector, and x contains displacements or other state variables. Each CG iteration costs O(nnz(A)) operations, dominated by sparse matrix–vector products plus a few vector updates and dot products.
 
-Preconditioners change the effective conditioning of the system and therefore the number of iterations \(k(\varepsilon)\) that CG needs to reach a relative residual tolerance \(\varepsilon\). Simple diagonal (Jacobi) preconditioning is cheap to set up but may converge slowly, whereas incomplete Cholesky (IC) and incomplete LU (ILU) have higher setup and per‑iteration costs but can dramatically reduce \(k(\varepsilon)\) on tougher matrices.
+Preconditioners change the effective conditioning of the system and therefore the number of iterations k(eps) that CG needs to reach a relative residual tolerance eps.
+Simple diagonal (Jacobi) preconditioning is cheap to set up but may converge slowly, whereas incomplete Cholesky (IC) and incomplete LU (ILU) have higher setup and per‑iteration costs but can dramatically reduce k(eps) on tougher matrices.
 
 Although the experiments here use SuiteSparse `bcsstk` matrices, the workflow is designed to generalize to real applications. Anyone solving sparse SPD systems from finite‑element structural models, fluid flow simulations, power‑grid networks, or similar PDE‑based problems can plug their own matrices into this pipeline, sweep tolerances and preconditioners, and use the resulting plots to pick a solver configuration that meets their accuracy target at minimum runtime.
 In that sense, the project is a reuseable template for making informed solver and preconditioner choices in production simulation codes that rely on Ginkgo and pyGinkgo.
