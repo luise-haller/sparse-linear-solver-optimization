@@ -10,7 +10,7 @@ The core goal is to understand how tolerance, matrix dimension, and precondition
   - `cg_solver.py` – runs CG on each matrix in `matrices/` at a fixed tolerance, sweeps over three preconditioners (Jacobi, IC, ILU), and writes per‑run statistics to CSV.
   - `analysis.py` – aggregates results by matrix and preconditioner and prints tables of mean, standard deviation, min, and max for wall time and residual metrics.
   - `plot_analysis.py` – generates comparison plots of mean wall time and mean relative residual across matrices and preconditioners.
-- `matrices/` – SuiteSparse `bcsstk` stiffness matrices of increasing size and sparsity, from \(48\times 48\) up to \(11948\times 11948\). [web:1][web:6]
+- `matrices/` – SuiteSparse `bcsstk` stiffness matrices of increasing size and sparsity, from \(48\times 48\) up to \(11948\times 11948\).
 - `results/` – CSV files (`results01.csv`, …, `results18.csv`) with raw experimental data.
 - `plots/`
   - `cg_analysis_all_matrices.png` – global tolerance and size analysis across all downloaded matrices.
