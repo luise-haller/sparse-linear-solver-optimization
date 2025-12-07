@@ -1,310 +1,168 @@
 # Modeling and Optimizing a Sparse Conjugate Gradient Solver with Ginkgo
 
-This repository contains a small case study on the performance of a sparse iterative solver (Conjugate Gradient, CG) using the Ginkgo library through its Python bindings `pyGinkgo`. The project follows Foothill's Applied Linear Algebra Lab modeling steps:
+This repository studies how to model and optimize a sparse Conjugate Gradient (CG) solver implemented with the Ginkgo library through its Python bindings `pyGinkgo`. The project follows Foothill’s Applied Linear Algebra Lab workflow: start from a real sparse SPD problem, build a mathematical and computational model, design experiments, and interpret results in terms of solver parameters, preconditioners, and matrix size.  
 
-1. Find and understand a real world problem  
-2. Mathematize the problem  
-3. State an ideal mathematical model  
-4. Use mathematics and computation to solve the ideal problem  
-5. Analyze and assess the ideal model and solutions  
-6. Think critically and verify the work  
-7. Transfer the model to meaningful real world solutions  
-8. Iterate, refine, and extend the model
+The core goal is to understand how tolerance, matrix dimension, and preconditioning (Jacobi, IC, ILU) interact to determine runtime and accuracy for structural stiffness matrices drawn from the SuiteSparse `bcsstk` family.
 
-The core code and data are as follows:
+## Repository layout
 
-- `cg_solver.py` - runs CG on a real world sparse matrix, sweeps tolerances, and writes results to `results.csv`.
-- `analysis.py` - summarizes runtime and residual statistics by tolerance.
-- `plot_analysis.py` - generates plots `runtime_vs_tolerance.png` and `residual_vs_tolerance.png`.
-- `bcsstk01.mtx`, `bcsstk02.mtx`, `bcsstk03.mtx`, `bcsstk04.mtx`, `bcsstk05.mtx`, `bcsstk06.mtx`, `bcsstk08.mtx`, `bcsstk11.mtx`, `bcsstk14.mtx`, `bcsstk15.mtx`, `bcsstk16.mtx`, and `bcsstk18.mtx` - SuiteSparse test matrices (structural stiffness matrices of increasing dimensions (48 x 48 to 11948 x 11948)).
-- `results01.csv`, `results02.csv`, `results03.csv`, `results04.csv`, `results05.csv`, `results06.csv`, `results08.csv`, `results11.csv`, `results14.csv``results15.csv`, `results16.csv`, and `results18.csv` - collected experimental data from multiple runs.
+- `src/`
+  - `cg_solver.py` – runs CG on each matrix in `matrices/` at a fixed tolerance, sweeps over three preconditioners (Jacobi, IC, ILU), and writes per‑run statistics to CSV.
+  - `analysis.py` – aggregates results by matrix and preconditioner and prints tables of mean, standard deviation, min, and max for wall time and residual metrics.
+  - `plot_analysis.py` – generates comparison plots of mean wall time and mean relative residual across matrices and preconditioners.
+- `matrices/` – SuiteSparse `bcsstk` stiffness matrices of increasing size and sparsity, from \(48\times 48\) up to \(11948\times 11948\). [web:1][web:6]
+- `results/` – CSV files (`results01.csv`, …, `results18.csv`) with raw experimental data.
+- `plots/`
+  - `cg_analysis_all_matrices.png` – global tolerance and size analysis across all downloaded matrices.
+  - `preconditioners_time_comparison.png` – mean wall time by preconditioner and matrix (matrices indexed 1–12; indices skip missing `bcsstk` IDs).
+  - `prec_bcsstk0x.png` – per‑matrix bar charts of mean wall time and mean relative residual by preconditioner.
+  - `analysis_plots_by_tol/` – older tolerance‑sweep plots for `bcsstk01` used to choose a “good” fixed tolerance for the newer multi‑matrix experiments.
 
---
+  All matrices come from the SuiteSparse Matrix Collection (Harwell–Boeing `bcsstk` structural stiffness problems), and are symmetric positive definite, which makes them suitable for CG.
 
-## STEP 1: Real-World Problem
+## Real-world problem and model
 
-Large scientific and engineering simulations (e.g., structural mechanics, fluid dynamics, electromagnetics) repeatedly need to solve sparse linear systems \(Ax = b\). These systems can have millions of unknowns and must be solved efficiently on modern hardware (multicore CPUs and GPUs).
-
-Iterative Krylov methods like Conjugate Gradient (CG) are widely used for solving symmetric positive definite (SPD) systems because they:
-
-- Require only matrix–vector products with the sparse matrix.
-- Can exploit sparsity and parallelism.
-- Are often used inside GPU‑accelerated libraries such as Ginkgo.
-
-In the scope of this project, I focus on understanding and improving the performance behavior of CG on a real SPD matrix, using Ginkgo’s Python interface. The goal is to learn how solver parameters (especially the residual tolerance) affect runtime, convergence, and potential optimization strategies.
-
----
-
-## STEP 2: Mathematize the problem
-
-We model the core task as solving the linear system
+Large simulations in structural mechanics, fluids, and related fields repeatedly solve sparse SPD systems
 \[
 Ax = b,
 \]
-where
+where \(A\) is a stiffness matrix arising from discretized PDEs, \(b\) is a load or forcing vector, and \(x\) contains displacements or other state variables. Direct factorization can become too slow or memory‑intensive for very large problems, so iterative Krylov methods such as CG are preferred. Each CG iteration costs \(O(\mathrm{nnz}(A))\) operations, dominated by sparse matrix–vector products plus a few vector updates and dot products.
 
-- \(A \in \mathbb{R}^{n \times n}\) is a sparse, symmetric positive definite stiffness matrix.
-- \(b \in \mathbb{R}^n\) is the right‑hand side vector.
-- \(x \in \mathbb{R}^n\) is the unknown solution.
+Preconditioners change the effective conditioning of the system and therefore the number of iterations \(k(\varepsilon)\) that CG needs to reach a relative residual tolerance \(\varepsilon\). Simple diagonal (Jacobi) preconditioning is cheap to set up but may converge slowly, whereas incomplete Cholesky (IC) and incomplete LU (ILU) have higher setup and per‑iteration costs but can dramatically reduce \(k(\varepsilon)\) on tougher matrices.
 
-### Concrete instance used here
+Although the experiments here use SuiteSparse `bcsstk` matrices, the workflow is designed to generalize to real applications. Anyone solving sparse SPD systems from finite‑element structural models, fluid flow simulations, power‑grid networks, or similar PDE‑based problems can plug their own matrices into this pipeline, sweep tolerances and preconditioners, and use the resulting plots to pick a solver configuration that meets their accuracy target at minimum runtime.
+In that sense, the project is a reuseable template for making informed solver and preconditioner choices in production simulation codes that rely on Ginkgo and pyGinkgo.
 
-- Matrix: `bcsstk01` from the SuiteSparse Collection, stored in `bcsstk01.mtx`.  
-  - Size \(n = 48\).  
-  - 224 stored entries (symmetric, so ~400 effective nonzeros).  
-  - Origin: structural mechanics stiffness matrix.
-- Right‑hand side: \(b = \mathbf{1}\), a vector of all ones.
-- Initial guess: \(x_0 = 0\).
+## Implementation and experiments
 
-We measure convergence using the **residual vector**
-\[
-r = Ax - b
-\]
-and its Euclidean (2‑)norm
-\[
-\|r\|_2.
-\]
-We also use the **relative residual**
-\[
-\frac{\|r\|_2}{\|b\|_2},
-\]
-which makes it easier to compare different runs.
+For each matrix in `MATRIX_FILES`, `cg_solver.py`:
 
----
+1. Loads \(A\) as a CSR matrix on the CPU via `pg.read`.
+2. Builds \(b\) as a vector of ones and \(x_0\) as zeros.
+3. Configures a CG solver with a chosen preconditioner and stopping criteria:
+   - maximum 1000 iterations;
+   - residual norm reduction factor (relative residual) fixed at \(\varepsilon = 10^{-6}\).
+4. Calls `pg.config_solve(A, b, x, solver_args=...)` and measures wall time with `time.perf_counter`.
+5. Computes the residual \(r = Ax - b\), its Euclidean norm, and the relative residual \(\|r\|_2 / \|b\|_2\).
+6. Appends one line to the appropriate CSV file with:
+   - `run_id, preconditioner, tolerance, wall_time_s, residual_norm, relative_residual`.
 
-## STEP 3: Ideal mathematical model
+Each matrix–preconditioner pair is run 10 times to average out timing noise from Python and the operating system, while the linear algebra itself remains deterministic.
 
-### Solver model: Conjugate Gradient
+`analysis.py` groups each CSV by preconditioner to summarize mean, standard deviation, minimum, and maximum of `wall_time_s`, `residual_norm`, and `relative_residual`. A final combined table aggregates mean wall time by matrix and preconditioner, which is then visualized by `plot_analysis.py` as bar charts. 
 
-For SPD matrices, CG iteratively improves the approximation \(x_k\) to \(x\) by:
+## Results and analysis
 
-- Computing a new search direction using residuals and previous directions.
-- Taking a step along that direction that minimizes the energy norm error.
+### Tolerance and size trends
 
-Each CG iteration involves:
+The figure below summarizes the original tolerance sweep (top row) and size scaling (bottom row) across all matrices using Jacobi preconditioning:
 
-- One or more sparse matrix–vector products (SpMV) with \(A\).
-- Several vector operations (axpy‑type updates, dot products).
+![CG analysis across all matrices](plots/analysis_plots_by_tol/cg_analysis_all_matrices.png)
 
-For a matrix with \(\text{nnz}(A)\) nonzeros, **one CG iteration** costs approximately
-\[
-O(\text{nnz}(A))
-\]
-operations, dominated by SpMV and vector updates.
+- The **CG Runtime vs. Tolerance** panel shows that for each matrix, runtime drops sharply from the loosest tolerance (\(10^{-2}\)) to tighter values and then flattens out, indicating that one‑time setup overheads and Python/pyGinkgo costs dominate for small to medium matrices. [image:1]
+- The **Relative Residual vs. Tolerance** panel is nearly a straight line on a log–log scale, confirming that tightening the requested tolerance reliably yields proportionally smaller final residuals across all matrices.
 
-If CG needs \(k(\varepsilon)\) iterations to reduce the residual norm below a tolerance \(\varepsilon\), then the **total cost** is
-\[
-O\big(\text{nnz}(A)\,k(\varepsilon)\big).
-\]
+The **Runtime Scaling with Matrix Size** and **Fixed Tolerance Performance** panels at the bottom of the same figure both plot mean wall time (using the tightest or fixed tolerance) against an index that orders the `bcsstk` matrices by dimension. These plots show that:
+- Runtime grows with matrix size, but not perfectly monotonically; one matrix in the mid‑range (around index 4) is noticeably more expensive, reflecting differences in nonzeros and conditioning as well as size.
+- For small matrices, overheads hide most tolerance effects, while for the largest ones, the cost of additional CG iterations becomes clearly visible in the wall time.
 
-### Convergence and stopping criteria
+### Preconditioner comparison
 
-In `cg_solver.py`, I configure CG in Ginkgo with:
+The next plot compares mean wall time by preconditioner at the fixed tolerance \(\varepsilon = 10^{-6}\) across all matrices. Here, matrix indices 1–12 are used to keep the x‑axis compact; they correspond to the subset of `bcsstk` matrices that were actually downloaded (skipping 7, 9, 10, 12, 13, and 17).
 
-- Preconditioner: Jacobi.
-- Stopping criteria:
-  - Maximum 1000 iterations.
-  - Residual norm reduction factor equal to a chosen tolerance \(\varepsilon\).
+![Mean wall time by preconditioner at the fixed tolerance](plots/preconditioners_time_comparison.png)
 
-The theoretical expectation:
+- For **small matrices**, the three preconditioners have similar runtimes because setup and Python overhead dominate; differences in iteration counts barely affect the overall time.
+- For **larger matrices**, IC typically yields the lowest mean wall time among the three, with ILU slightly slower and Jacobi often much slower, reflecting the trade‑off between stronger preconditioning (fewer iterations) and the extra work to build and apply the preconditioner.
 
-- Tighter tolerance (smaller \(\varepsilon\)) ⇒ more iterations \(k(\varepsilon)\) ⇒ higher runtime.
-- Final relative residual should be on the order of, or below, \(\varepsilon\).
+### Prec-matrix behavior and the size “threshold”
 
-Because the Python bindings do not expose the iteration count, I treat **runtime** as a proxy for the number of iterations for this fixed matrix and hardware.
+To zoom in, the prec‑matrix plots illustrate how each preconditioner behaves for a specific matrix. For example, the first matrix (`bcsstk01`) shows:
 
----
+![Preconditioner Performance Specs for bcsstk01](plots/prec_bcsstk01.png)
 
-## STEP 4: Use mathematics and computation to solve the ideal problem
+- **Mean relative residuals** for Jacobi, IC, and ILU are visually indistinguishable and all safely below the target tolerance, which means all three preconditioners are effectively “good enough” in terms of accuracy on this tiny \(48\times 48\) problem. 
+- **Mean wall times** differ slightly, with ILU appearing marginally faster than IC and Jacobi slower, but the absolute times are so small that these differences mainly reflect noise and fixed overhead rather than meaningful algorithmic gaps.
 
-### Implementation: `cg_solver.py`
+The interesting behavior appears for the largest matrix in the set (`bcsstk18.mtx`, labeled `bcsstk012` in the plots because of the skipped indices):
 
-`cg_solver.py` performs the following steps for each run:
+![Preconditioner Performance Specs for bcsstk01](plots/prec_bcsstk012.png)
 
-1. Load the sparse matrix:
-   - Uses `pg.read(path="bcsstk01.mtx", dtype="double", format="Csr", device="cpu")` to load \(A\) as a CSR matrix on the CPU.
-2. Build \(b\) and initial guess:
-   - \(b\) is a dense tensor of ones.
-   - \(x_0\) is a dense tensor of zeros.
-3. Configure the solver:
-   - CG with Jacobi preconditioner.
-   - Stopping criteria: Iteration limit 1000, residual reduction factor = chosen tolerance.
-4. Solve:
-   - Calls `pg.config_solve(A, b, x, solver_args=solver_params)` to obtain a numerical solution \(x_\text{sol}\).
-5. Measure performance and correctness:
-   - Wall‑clock time using `time.perf_counter`.
-   - Residual \(r = Ax_\text{sol} - b\) using `A.apply(x_sol, r)` and NumPy operations.
-   - Residual norm \(\|r\|_2\) and relative residual \(\|r\|_2 / \|b\|_2\).
-6. Append one line per run to `results.csv` with:
-   - `run_id, tolerance, wall_time_s, residual_norm, relative_residual`.
+- Here, **Jacobi’s mean relative residual is clearly higher** than the residuals for IC and ILU, which remain tightly clustered at a smaller value; this is the first and only matrix where the plot shows a visible separation in residual quality between Jacobi and the stronger preconditioners at the same requested tolerance.
+- At the same time, **Jacobi’s mean wall time is significantly larger** than both IC and ILU, while IC is slightly faster than ILU. This indicates that, beyond some matrix size and difficulty (between roughly \(4884\times 4884\) for `bcsstk16` and \(11948\times 11948\) for `bcsstk18`), Jacobi not only converges to a worse residual but also needs substantially more iterations, making it a poor choice compared to IC or ILU.
 
-### Experiment design
+Taken together, the family of `prec_bcsstk0x.png` plots shows that:
 
-In `main()`:
+- For all matrices except the largest one, **all three preconditioners deliver essentially identical mean relative residuals**, so the main difference is runtime. This suggests that on small and moderate stiffness problems, any of the three is numerically adequate, and the choice can be guided by implementation convenience. 
+- For the largest matrix (`bcsstk18`), **IC emerges as the best compromise**, achieving both the lowest mean wall time and one of the lowest residuals, while **Jacobi becomes clearly suboptimal** in both speed and accuracy. This provides empirical evidence for a *size and conditioning threshold* beyond which simple diagonal preconditioning is no longer effective for SPD stiffness matrices and more sophisticated preconditioners are needed.
 
-- Tolerances tested:
-  - \(10^{-2}, 10^{-4}, 10^{-6}, 10^{-8}, 10^{-10}\).
-- Runs per tolerance:
-  - 10 independent runs per tolerance (to average out timing noise).
+## How to reproduce
 
-Total: 50 CG solves, all recorded in `results.csv`.
+This project uses
 
----
+- Ginkgo (C++ library): https://github.com/ginkgo-project/ginkgo 
+- pyGinkgo (Python bindings): https://github.com/Helmholtz-AI-Energy/pyGinkgo 
 
-## STEP 5: Analyze and assess the ideal model and solutions
+The steps below summarize what worked on an Apple Silicon (M3) macOS system using the **reference** executor only (no CUDA/HIP/OpenMP) and Python 3.
 
-### Numerical summary (`analysis.py`)
+1. **Install Ginkgo (reference backend only)**
 
-`analysis.py` loads `results.csv` and groups runs by tolerance to compute mean, standard deviation, minimum, and maximum of:
+```
+git clone https://github.com/ginkgo-project/ginkgo.git
+cd ginkgo
+mkdir build && cd build
 
-- `wall_time_s`
-- `residual_norm`
-- `relative_residual`
+cmake ..
+-DGINKGO_BUILD_REFERENCE=ON
+-DGINKGO_BUILD_OMP=OFF
+-DGINKGO_BUILD_CUDA=OFF
+-DGINKGO_BUILD_HIP=OFF
+-DGINKGO_BUILD_DPCPP=OFF
+-DGINKGO_BUILD_TESTS=OFF
+-DGINKGO_BUILD_EXAMPLES=OFF
+-DGINKGO_BUILD_BENCHMARKS=OFF
+-DCMAKE_INSTALL_PREFIX=/opt/homebrew
+```
 
-The summarized output is:
+cmake --build . -j$(sysctl -n hw.ncpu)
+sudo cmake --install .
+This installs the reference executor into `/opt/homebrew/lib` (no GPU or OpenMP backends, which are problematic on recent Apple Silicon systems).
 
-Summary by tolerance parameter:
-             wall_time_s                               residual_norm                                  relative_residual                                 
-                    mean       std       min       max          mean  std           min           max              mean  std           min           max
-tolerance                                                                                                                                               
-1.000000e-10    0.000222  0.000013  0.000215  0.000256  9.521926e-11  0.0  9.521926e-11  9.521926e-11      1.374372e-11  0.0  1.374372e-11  1.374372e-11
-1.000000e-08    0.000217  0.000007  0.000211  0.000235  1.060580e-08  0.0  1.060580e-08  1.060580e-08      1.530815e-09  0.0  1.530815e-09  1.530815e-09
-1.000000e-06    0.000224  0.000025  0.000196  0.000270  1.804234e-06  0.0  1.804234e-06  1.804234e-06      2.604188e-07  0.0  2.604188e-07  2.604188e-07
-1.000000e-04    0.000209  0.000015  0.000197  0.000248  5.895431e-04  0.0  5.895431e-04  5.895431e-04      8.509322e-05  0.0  8.509322e-05  8.509322e-05
-1.000000e-02    0.001619  0.004475  0.000190  0.014355  3.418069e-02  0.0  3.418069e-02  3.418069e-02      4.933558e-03  0.0  4.933558e-03  4.933558e-03
+2. **Install pyGinkgo (with the `Ginkgo::ginkgo` target fix)**
 
-For easier reading, the key trends are:
+git clone https://github.com/Helmholtz-AI-Energy/pyGinkgo.git
+cd pyGinkgo
+mkdir build && cd build
 
-| Tolerance | Mean wall time (s) | Mean relative residual |
-|----------:|--------------------|------------------------|
-| \(10^{-2}\)  | \(1.62\times 10^{-3}\) | \(4.93\times 10^{-3}\) |
-| \(10^{-4}\)  | \(2.09\times 10^{-4}\) | \(8.51\times 10^{-5}\) |
-| \(10^{-6}\)  | \(2.24\times 10^{-4}\) | \(2.60\times 10^{-7}\) |
-| \(10^{-8}\)  | \(2.17\times 10^{-4}\) | \(1.53\times 10^{-9}\) |
-| \(10^{-10}\) | \(2.22\times 10^{-4}\) | \(1.37\times 10^{-11}\) |
+Early versions of pyGinkgo assume a CMake target called `ginkgo`, but modern Ginkgo exports `Ginkgo::ginkgo` instead.
+If CMake fails with an error like
 
-These results show:
+> `install IMPORTED_RUNTIME_ARTIFACTS given target "ginkgo" which does not exist`
 
-- The **relative residual** decreases consistently as the requested tolerance is tightened, dropping from about \(5\times 10^{-3}\) at \(10^{-2}\) down to about \(10^{-11}\) at \(10^{-10}\), which confirms that the solver is achieving high accuracy when requested. 
-- The **mean wall time** is smallest (aside from one outlier first run) around \(2\times 10^{-4}\) seconds for tolerances between \(10^{-4}\) and \(10^{-10}\). For this tiny matrix, fixed overhead dominates, so tighter tolerances do not dramatically increase runtime; on larger problems the dependence on tolerance would be stronger, as each additional iteration costs \(O(\text{nnz}(A))\). 
+then:
 
-The two plots generated by `plot_analysis.py` visualize these trends:
+- Open `CMakeLists.txt` in the pyGinkgo repo.
+- Replace every occurrence of the bare target name `ginkgo` with `Ginkgo::ginkgo`.
+- Save and reconfigure:
 
-- `runtime_vs_tolerance.png` – CG runtime vs. tolerance (log-log).
+  ```
+  cmake .. -DGinkgo_DIR=/opt/homebrew/lib/cmake/Ginkgo
+  cmake --build . -j$(sysctl -n hw.ncpu)
+  sudo cmake --install .
+  ```
 
-<img src="runtime_vs_tolerance.png" alt="CG Runtime vs Tolerance" width="700">
+Point `Ginkgo_DIR` to wherever `GinkgoConfig.cmake` was installed on your system (for Homebrew‑style prefix this is typically `/opt/homebrew/lib/cmake/Ginkgo`). 
 
-- `residual_vs_tolerance.png` – relative residual vs. tolerance (log-log).
+3. **Set up Python environment**
 
-<img src="residual_vs_tolerance.png" alt="Relative Residual vs Tolerance" width="700">
+python -m venv .venv
+source .venv/bin/activate
+pip install numpy pandas matplotlib
 
-These results show:
+4. **Run this project**
 
-- The **relative residual** decreases almost linearly on the log–log plot as the tolerance is tightened. Each time the tolerance is reduced by two orders of magnitude (from \(10^{-2}\)→\(10^{-4}\)→\(10^{-6}\)→\(10^{-8}\)→\(10^{-10}\)), the mean relative residual also drops by roughly two orders of magnitude. This nearly straight line in the log–log plot indicates that the solver is tracking the requested tolerance very closely: asking for a stricter tolerance reliably yields a proportionally smaller residual.
+Run in this order: `cg_solver.py` -> `analysis.py` -> `plot_analysis.py`
 
-- The **runtime vs. tolerance plot** shows one large drop going from \(10^{-2}\) to the smaller tolerances, and then a relatively flat curve from \(10^{-4}\) down to \(10^{-10}\). The first run at \(10^{-2}\) includes extra one‑time costs (Python start‑up, loading the matrix, JIT/optimizer warm‑up), so its wall time is much larger; once that overhead is amortized, all subsequent runs have similar wall times around \(2\times 10^{-4}\) seconds. This explains the big downward step at \(10^{-2}\) followed by a nearly horizontal line: for this tiny matrix, fixed overhead dominates, and the extra iterations needed for tighter tolerances do not significantly change the total runtime.
 
-Because the matrix is very small (48×48), per‑run times are dominated by fixed overhead (Python, pyGinkgo bindings, and solver setup) rather than by the cost of additional CG iterations. As a result, runtime differences between \(10^{-4}\) and \(10^{-10}\) are modest, even though the relative residual improves by many orders of magnitude. On larger problems, where each iteration costs much more work, tightening the tolerance would cause a clearer increase in runtime.
 
-These files are committed in the repo and can be embedded in this README.
 
----
-
-## STEP 6: Think critically and verify the work
-
-### Correctness checks
-
-The near‑linear downward trend of the relative residual vs. tolerance on a log–log scale, together with the large one‑time runtime drop from \(10^{-2}\) to the tighter tolerances, is consistent with the expectation that: (1) CG can reliably meet the requested residual reduction, and (2) for this small matrix, runtime is dominated by fixed overhead rather than by the incremental cost of additional iterations.
-
-Beyond these global trends, 3 specific checks support correctness:
-
-1. **Residual norms vs. tolerance**
-
-   For each tolerance, the mean relative residual is much smaller than 1 and matches the requested tolerance scale:
-
-   - At \(10^{-2}\), mean relative residual \(\approx 4.93\times 10^{-3}\).
-   - At \(10^{-6}\), mean relative residual \(\approx 2.60\times 10^{-7}\).
-   - At \(10^{-10}\), mean relative residual \(\approx 1.37\times 10^{-11}\).
-
-   This confirms that the numerical solutions \(x\) satisfy \(Ax \approx b\) to within the desired accuracy.
-
-2. **Stability across runs**
-
-   Within each tolerance, `results.csv` shows identical residuals and relative residuals across all 10 runs, and only small variation in wall time. This indicates deterministic solver behavior and that timing noise comes from the runtime environment, not from numerical instability.
-
-3. **Sanity of solution values**
-
-   Debug prints of the first few entries of \(x\) show finite, moderate‑sized floating‑point numbers (no NaNs or blow‑ups), which is consistent with solving a well‑posed SPD system.
-
-### Limitations and critical reflection
-
-- **Missing iteration counts**
-
-  The pyGinkgo convergence logger type returned by `config_solve` does not expose iteration counts or residual histories to Python. Because of this, iteration counts could not be recorded directly, and wall‑clock runtime is used as a proxy for the effective number of iterations on this fixed matrix and hardware.
-
-- **Single small matrix and backend**
-
-  All experiments use a single, relatively small matrix (`bcsstk01`) and the reference CPU executor. The workflow generalizes, but the numerical results here should be viewed as a proof‑of‑concept (and not a large‑scale performance study).
-
-- **Overhead vs. algorithmic cost**
-
-  For \(n = 48\), Python and binding overheads are comparable to the work of a few CG iterations. On larger matrices, the theoretical cost model \(O(\text{nnz}(A)\,k(\varepsilon))\) would dominate behavior more clearly, and runtime would grow more noticeably as tolerance is tightened.
-
----
-
-## STEP 7: Transfer the model to meaningful real‑world solutions
-
-Even though the test case is small, the modeling workflow and conclusions shown above can extend to real scientific/engineering applications that involve repeatedly  solving large sparse SPD systems.
-
-Below, I will summarize how specfic findings support such real world applications.
-
-1. **Choosing tolerances in practice**
-
-   The experiments show that tightening the tolerance from \(10^{-2}\) to \(10^{-10}\) yields residuals that decrease by roughly the same factor. In real simulations, this informs how to pick a tolerance that is “good enough” for the downstream quantity of interest (e.g., stress, displacement, pressure) without overspending runtime.
-
-2. **Preconditioner strategies**
-
-   This project uses Jacobi as a very simple preconditioner. For modest problems it works fine, but on larger or poorly conditioned systems, Jacobi may require many iterations. The same logging setup (tolerance sweep → `results.csv` → analysis) can be reused to compare Jacobi with stronger preconditioners such as ILU or incomplete Cholesky, allowing one to:
-
-   - Quantify how many fewer iterations (or how much less time) a stronger preconditioner needs.
-   - Balance that against extra setup cost and memory usage.
-
-3. **Executor and hardware choices**
-
-   Ginkgo separates the linear operator from the execution backend. The same CG configuration used here on the reference CPU executor can, in principle, be run on OpenMP, CUDA, HIP, or SYCL executors. The analysis pipeline in this repo can therefore be reused to:
-
-   - Compare CPU vs. GPU performance for larger matrices.
-   - Study how runtime and effective per‑iteration cost change as one moves to more parallel hardware where memory bandwidth is the main bottleneck.
-
----
-
-## STEP 8: Iterate, refine, and extend the model
-
-The project completely and successfully models ?
-
-Future iterations will include:
-
-- **Larger and multiple matrices**
-
-  Run the same CG + logging framework on larger SPD matrices from the SuiteSparse Collection or application codes. This would reveal how runtime scales with \(n\) and \(\text{nnz}(A)\), and let you empirically fit a cost model of the form
-  \[
-  T(\varepsilon) \approx C \cdot \text{nnz}(A)\,k(\varepsilon).
-  \]
-
-- **Expose and use iteration counts**
-
-  Extend or wrap pyGinkgo to expose CG iteration counts and residual histories from Ginkgo’s convergence logger. With that, you could plot iterations vs. tolerance directly and compare convergence rates to theoretical expectations based on the condition number \(\kappa(A)\).
-
-- **Compare different preconditioners**
-
-  Add experiments that swap Jacobi for stronger preconditioners, then log and compare runtime and residual norms. This would make the preconditioner–performance trade‑off concrete: fewer iterations but higher per‑iteration cost and more memory.
-
-- **Mixed‑precision strategies**
-
-  Investigate mixed‑precision approaches where SpMV operations run in single precision while key reductions or corrections remain in double precision. This can reduce memory traffic and improve throughput on bandwidth‑limited architectures.
-
-- **Parallel and GPU backends**
-
-  On appropriate hardware, rerun the experiments using OpenMP or GPU executors in Ginkgo. This would allow direct measurement of strong/weak scaling and the impact of memory bandwidth on iterative solver performance.
-
-All of these future iterations would tighten the connection between the mathematical model (CG complexity and convergence), computational implementation (pyGinkgo + backends), and real‑world performance optimization of sparse linear solvers.
