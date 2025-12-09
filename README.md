@@ -27,7 +27,7 @@ Large simulations in structural mechanics, fluids, and related fields repeatedly
 Preconditioners change the effective conditioning of the system and therefore the number of iterations k(eps) that CG needs to reach a relative residual tolerance eps.
 Simple diagonal (Jacobi) preconditioning is cheap to set up but may converge slowly, whereas incomplete Cholesky (IC) and incomplete LU (ILU) have higher setup and per‑iteration costs but can dramatically reduce k(eps) on tougher matrices.
 
-Although the experiments here use SuiteSparse `bcsstk` matrices, the workflow is designed to generalize to real applications. Anyone solving sparse SPD systems from finite‑element structural models, fluid flow simulations, power‑grid networks, or similar PDE‑based problems can plug their own matrices into this pipeline, sweep tolerances and preconditioners, and use the resulting plots to pick a solver configuration that meets their accuracy target at minimum runtime.
+Although the experiments here use SuiteSparse `bcsstk` matrices, the workflow is designed to generalize to real applications. Anyone solving sparse SPD systems from finite‑element structural models, fluid flow simulations, power‑grid networks, or similar PDE‑based problems can plug their own matrices into this pipeline, change tolerances and preconditioners for their specific case, and use the resulting plots to pick a solver configuration that meets their accuracy target at minimum runtime.
 In that sense, the project is a reuseable template for making informed solver and preconditioner choices in production simulation codes that rely on Ginkgo and pyGinkgo.
 
 ## Implementation and experiments
